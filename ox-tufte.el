@@ -1,13 +1,13 @@
 ;;; ox-tufte.el --- Tufte HTML org-mode export backend
 
-;; Copyright (C) 2016 Matthew Lee Hinman
+;; Copyright (C) 2022 Toby Law
 
-;; Author: M. Lee Hinman
+;; Author: Toby Law
 ;; Description: An org exporter for Tufte HTML
-;; Keywords: org, tufte, html
+;; Keywords: outlines, processes
 ;; Version: 1.0.0
-;; Package-Requires: ((org "8.2") (emacs "24"))
-;; URL: https://github.com/dakrone/ox-tufte
+;; Package-Requires: ((emacs "24.4"))
+;; URL: https://github.com/tzcl/ox-tufte
 
 ;; This file is not part of GNU Emacs.
 
@@ -26,8 +26,8 @@
 
 ;;; Commentary:
 
-;; This is an export backend for Org-mode that exports buffers to HTML that
-;; is compatible with Tufte CSS - https://edwardtufte.github.io/tufte-css/ out of
+;; This is an export backend for Org-mode that exports buffers to HTML that is
+;; compatible with Tufte CSS - https://edwardtufte.github.io/tufte-css/ - out of
 ;; the box (meaning no CSS modifications needed).
 
 ;;; Code:
@@ -35,8 +35,17 @@
 (require 'ox)
 (require 'ox-html)
 
-
 ;;; User-Configurable Variables
+
+;; Original org-html-divs
+;; ((preamble "div" "preamble")
+;;  (content "div" "content")
+;;  (postamble "div" "postamble"))
+
+;; TODO: review
+(setq org-html-divs '((preamble "div" "preamble")
+                      (content "article" "content")
+                      (postamble "div" "postamble")))
 
 (defgroup org-export-tufte nil
   "Options specific to Tufte export back-end."
@@ -53,7 +62,6 @@
   :group 'org-export-tufte
   :type 'boolean)
 
-
 ;;; Define Back-End
 
 (org-export-define-derived-backend 'tufte-html 'html
@@ -70,10 +78,14 @@
                      (src-block . org-tufte-src-block)
                      (link . org-tufte-maybe-margin-note-link)
                      (quote-block . org-tufte-quote-block)
-                     (verse-block . org-tufte-verse-block)))
+                     (verse-block . org-tufte-verse-block)
+                     (section . org-tufte-section)))
 
-
 ;;; Transcode Functions
+
+(defun org-tufte-section (section contents info)
+  "Normally org-html-section wraps CONTENTS of SECTION in a div but that isn't necessary here."
+  contents)
 
 (defun org-tufte-quote-block (quote-block contents info)
   "Transform a quote block into an epigraph in Tufte HTML style"
@@ -151,7 +163,6 @@ is nil. INFO is a plist used as a communication channel."
   (format "<pre class=\"code\"><code>%s</code></pre>"
           (org-html-format-code src-block info)))
 
-
 ;;; Export functions
 
 ;;;###autoload
@@ -216,7 +227,6 @@ Return output file's name."
                                       "<!-- %s --><!-- %s -->")))
     (org-export-to-file 'tufte-html outfile async subtreep visible-only)))
 
-
 ;;; publishing function
 
 ;;;###autoload

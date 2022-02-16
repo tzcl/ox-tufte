@@ -1,9 +1,10 @@
 #+TITLE: Ox-tufte
 #+AUTHOR: Lee Hinman
+#+AUTHOR: Toby Law
 #+EMAIL: lee@writequit.org
+#+EMAIL: toby@tzcl.me
 
 * Introduction
-
 This is an export backend for Org-mode that exports buffers to HTML that is
 compatible with [[https://edwardtufte.github.io/tufte-css/][Tufte CSS]] out of the box (meaning no CSS modifications needed).
 
