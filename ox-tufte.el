@@ -6,7 +6,7 @@
 ;; Description: An org exporter for Tufte HTML
 ;; Keywords: outlines, processes
 ;; Version: 1.0.0
-;; Package-Requires: ((emacs "24.4"))
+;; Package-Requires: ((emacs "27.2"))
 ;; URL: https://github.com/tzcl/ox-tufte
 
 ;; This file is not part of GNU Emacs.
@@ -42,10 +42,11 @@
 ;;  (content "div" "content")
 ;;  (postamble "div" "postamble"))
 
-;; TODO: review
+;; TODO: refactor this into build script
 (setq org-html-divs '((preamble "div" "preamble")
                       (content "article" "content")
-                      (postamble "div" "postamble")))
+                      (postamble "div" "postamble"))
+      org-html-postamble 'nil)
 
 (defgroup org-export-tufte nil
   "Options specific to Tufte export back-end."
@@ -74,21 +75,89 @@
             (lambda (a s v b)
               (if a (org-tufte-export-to-file t s v)
                 (org-open-file (org-tufte-export-to-file nil s v)))))))
-  :translate-alist '((footnote-reference . org-tufte-footnote-reference)
-                     (src-block . org-tufte-src-block)
+  :translate-alist '((center-block . org-tufte-center-block)
+                     (footnote-reference . org-tufte-footnote-reference)
+                     (headline . org-tufte-headline)
                      (link . org-tufte-maybe-margin-note-link)
                      (quote-block . org-tufte-quote-block)
-                     (verse-block . org-tufte-verse-block)
-                     (section . org-tufte-section)))
+                     (section . org-tufte-section)
+                     (src-block . org-tufte-src-block)
+                     (verse-block . org-tufte-verse-block)))
 
 ;;; Transcode Functions
 
 (defun org-tufte-section (section contents info)
-  "Normally org-html-section wraps CONTENTS of SECTION in a div but that isn't necessary here."
+  "Just return the content, don't wrap in a div."
   contents)
+
+(defun org-tufte-headline (headline contents info)
+  (unless (org-element-property :footnote-section-p headline)
+    (let* ((numberedp (org-export-numbered-headline-p headline info))
+           (numbers (org-export-get-headline-number headline info))
+           (level (+ (org-export-get-relative-level headline info)
+                     (1- (plist-get info :html-toplevel-hlevel))))
+           (todo (and (plist-get info :with-todo-keywords)
+                      (let ((todo (org-element-property :todo-keyword headline)))
+                        (and todo (org-export-data todo info)))))
+           (todo-type (and todo (org-element-property :todo-type headline)))
+           (priority (and (plist-get info :with-priority)
+                          (org-element-property :priority headline)))
+           (text (org-export-data (org-element-property :title headline) info))
+           (tags (and (plist-get info :with-tags)
+                      (org-export-get-tags headline info)))
+           (full-text (funcall (plist-get info :html-format-headline-function)
+                               todo todo-type priority text tags info))
+           (contents (or contents ""))
+           ;; REVIEW: may not be sufficient -- try to find parent id?
+           (id (mapconcat #'downcase (split-string text) "-"))
+           (formatted-text
+            (if (plist-get info :html-self-link-headlines)
+                (format "<a href=\"#%s\">%s</a>" id full-text)
+              full-text)))
+      (if (org-export-low-level-p headline info)
+          ;; This is a deep sub-tree: export it as a list item.
+          (let* ((html-type (if numberedp "ol" "ul")))
+            (concat
+             (and (org-export-first-sibling-p headline info)
+                  (apply #'format "<%s class=\"org-%s\">\n"
+                         (make-list 2 html-type)))
+             (org-html-format-list-item
+              contents (if numberedp 'ordered 'unordered)
+              nil info nil (concat (org-html--anchor id nil nil info) formatted-text)) "\n"
+             (and (org-export-last-sibling-p headline info)
+                  (format "</%s>\n" html-type))))
+        ;; Standard headline.  Export it as a section.
+        (let ((extra-class
+               (org-element-property :HTML_CONTAINER_CLASS headline))
+              (headline-class
+               (org-element-property :HTML_HEADLINE_CLASS headline))
+              (headline-container (org-html--container headline info)))
+          (concat
+           (if (not (equal headline-container "div"))
+               (format "<%s id=\"%s\" class=\"%s\">"
+                       headline-container
+                       (concat (format "outline-%d" level)
+                               (and extra-class " "))
+                       extra-class))
+           (format "\n<h%d id=\"%s\"%s>%s</h%d>\n"
+                   level
+                   id
+                   (if (not headline-class) ""
+                     (format " class=\"%s\"" headline-class))
+                   (concat
+                    (and numberedp
+                         (format "<span class=\"section-number-%d\">%s</span> "
+                                 level
+                                 (concat (mapconcat #'number-to-string numbers ".") ".")))
+                    formatted-text)
+                   level)
+           contents
+           (if (not (equal headline-container "div"))
+               (format "</%s>" headline-container))))))))
 
 (defun org-tufte-quote-block (quote-block contents info)
   "Transform a quote block into an epigraph in Tufte HTML style"
+  ;; TODO: review -- should every blockquote be wrapped in its own div?
   (format "<div class=\"epigraph\"><blockquote>\n%s\n%s</blockquote></div>"
           contents
           (if (org-element-property :name quote-block)
@@ -114,12 +183,25 @@ contextual information."
            (ws (let (out) (dotimes (i num-ws out)
                             (setq out (concat out "&#xa0;"))))))
       (setq contents (replace-match ws nil t contents))))
-  (format "<div class=\"epigraph\"><blockquote>\n%s\n%s</blockquote></div>"
+  (format "<div class=\"epigraph\"><blockquote>\n<p>%s</p>\n%s</blockquote></div>"
           contents
           (if (org-element-property :name verse-block)
               (format "<footer>%s</footer>"
                       (org-element-property :name verse-block))
             "")))
+
+(defun org-tufte-center-block (center-block contents info)
+  "Transcode a CENTER-BLOCK from Org to HTML.
+CONTENTS is center block contents. INFO is a plist holding
+contextual information."
+  ;; Indent the contents and optionally allow for a citation
+  ;; REVIEW: see if there's a way to pass in a URL
+  (let ((text (org-element-property :name center-block)))
+    (format "<blockquote>%s\n%s</blockquote>\n"
+        contents
+        (and text
+               (format "<footer>%s</footer>\n" text)))))
+
 
 (defun org-tufte-footnote-reference (footnote-reference contents info)
   "Create a footnote according to the tufte css format.
@@ -146,16 +228,17 @@ plist holding contextual information."
 If it does not, it will be passed onto the original function in
 order to be handled properly. DESC is the description part of the
 link. INFO is a plist holding contextual information."
+  ;; REVIEW: desc gets escaped rather than passed through ox-html
   (let ((path (split-string (org-element-property :path link) ":")))
-    (if (and (string= (org-element-property :type link) "fuzzy")
-             (string= (car path) "mn"))
-        (format
-         (concat "<label for=\"%s\" class=\"margin-toggle\">&#8853;</label>"
-                 "<input type=\"checkbox\" id=\"%s\" class=\"margin-toggle\"/>"
-                 "<span class=\"marginnote\">%s</span>")
-         (cadr path) (cadr path)
-         (replace-regexp-in-string "</?p.*>" "" desc))
-      (org-html-link link desc info))))
+      (if (and (string= (org-element-property :type link) "fuzzy")
+               (string= (car path) "mn"))
+          (format
+           (concat "<label for=\"%s\" class=\"margin-toggle\">&#8853;</label>"
+                   "<input type=\"checkbox\" id=\"%s\" class=\"margin-toggle\"/>"
+                   "<span class=\"marginnote\">%s</span>")
+           (cadr path) (cadr path)
+           (replace-regexp-in-string "</?p.*>" "" desc))
+        (org-html-link link desc info))))
 
 (defun org-tufte-src-block (src-block contents info)
   "Transcode SRC-BLOCK element into Tufte HTML format. CONTENTS
